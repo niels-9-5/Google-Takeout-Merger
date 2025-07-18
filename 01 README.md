@@ -48,7 +48,7 @@ This tool handles the mess of your exported Google Photos and makes everything e
 
 ## 📦 Download
 
-Visit the [Releases](https://github.com/YOUR-USERNAME/YOUR-REPO-NAME/releases) section to download the latest `.exe`.
+Visit the [Releases](https://github.com/niels-9-5/Google-Takeout-Merger/releases) section to download the latest `.exe`.
 
 ---
 
