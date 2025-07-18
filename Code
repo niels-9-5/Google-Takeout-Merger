@@ -1,0 +1,278 @@
+import os
+import zipfile
+import json
+import shutil
+import tkinter as tk
+from tkinter import filedialog, ttk, messagebox
+from datetime import datetime
+from PIL import Image
+from PIL.ExifTags import TAGS
+import threading
+import time
+import subprocess
+
+try:
+    import psutil
+except ImportError:
+    psutil = None  # We’ll handle missing psutil later
+
+LANGUAGES = {
+    "English": {
+        "select_zip": "Select a Google Takeout ZIP file:",
+        "browse": "Browse",
+        "select_media": "Select media types:",
+        "photos": "Photos",
+        "videos": "Videos",
+        "start": "Start",
+        "eta": "Estimated time remaining:",
+        "done": "Done!",
+        "output_saved": "Finished processing! Output saved to:",
+        "total": "Total Files:",
+        "moved": "Moved:",
+        "skipped": "Skipped:",
+        "error": "Error log saved to:",
+        "output_folder": "Select output folder:",
+        "disk_warning": "Warning: You may not have enough disk space to extract this Takeout file.",
+        "missing_psutil": "Warning: psutil is not installed. Disk space will not be checked."
+    },
+    "Español": {
+        "select_zip": "Selecciona un archivo ZIP de Google Takeout:",
+        "browse": "Buscar",
+        "select_media": "Selecciona tipos de medios:",
+        "photos": "Fotos",
+        "videos": "Videos",
+        "start": "Iniciar",
+        "eta": "Tiempo estimado restante:",
+        "done": "¡Hecho!",
+        "output_saved": "¡Procesamiento completo! Salida guardada en:",
+        "total": "Total de archivos:",
+        "moved": "Movidos:",
+        "skipped": "Omitidos:",
+        "error": "Registro de errores guardado en:",
+        "output_folder": "Selecciona carpeta de salida:",
+        "disk_warning": "Advertencia: Es posible que no tengas suficiente espacio en disco.",
+        "missing_psutil": "Advertencia: psutil no está instalado. No se verificará el espacio en disco."
+    },
+    "Français": {
+        "select_zip": "Sélectionnez un fichier ZIP Google Takeout :",
+        "browse": "Parcourir",
+        "select_media": "Sélectionnez les types de médias :",
+        "photos": "Photos",
+        "videos": "Vidéos",
+        "start": "Démarrer",
+        "eta": "Temps restant estimé :",
+        "done": "Terminé !",
+        "output_saved": "Traitement terminé ! Fichiers enregistrés dans :",
+        "total": "Fichiers totaux :",
+        "moved": "Déplacés :",
+        "skipped": "Ignorés :",
+        "error": "Journal des erreurs enregistré dans :",
+        "output_folder": "Sélectionner le dossier de sortie :",
+        "disk_warning": "Avertissement : Vous n'avez peut-être pas assez d'espace disque.",
+        "missing_psutil": "Avertissement : psutil n'est pas installé. L'espace disque ne sera pas vérifié."
+    }
+}
+
+class TakeoutMergerApp(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title("Google Takeout Merger")
+        self.geometry("720x440")
+        self.resizable(True, True)
+
+        self.selected_zip = None
+        self.output_folder = os.path.join(os.path.expanduser("~"), "Downloads", "Merged Media")
+        self.selected_media_types = {"photos": tk.BooleanVar(value=True), "videos": tk.BooleanVar(value=True)}
+        self.total_files = 0
+        self.moved_files = 0
+        self.skipped_files = 0
+        self.error_log = []
+        self.language = tk.StringVar(value="English")
+        self.translations = LANGUAGES[self.language.get()]
+
+        self.create_widgets()
+
+    def create_widgets(self):
+        lang_frame = tk.Frame(self)
+        lang_frame.pack(anchor='nw', pady=(10, 0), padx=(10, 0))
+        ttk.Combobox(lang_frame, values=list(LANGUAGES.keys()), textvariable=self.language, state="readonly", width=10, postcommand=self.update_language).pack()
+
+        top_frame = tk.Frame(self)
+        top_frame.pack(fill=tk.X, expand=True, pady=10, padx=10)
+        top_frame.columnconfigure((0, 1, 2), weight=1)
+
+        # Left
+        zip_frame = tk.Frame(top_frame)
+        zip_frame.grid(row=0, column=0, sticky="nsew", padx=10)
+        ttk.Label(zip_frame, text=self.translations["select_zip"]).pack()
+        ttk.Button(zip_frame, text=self.translations["browse"], command=self.select_zip).pack()
+        self.zip_label = ttk.Label(zip_frame, text="No file selected", wraplength=200)
+        self.zip_label.pack()
+
+        # Middle
+        media_frame = tk.Frame(top_frame)
+        media_frame.grid(row=0, column=1, sticky="nsew", padx=10)
+        ttk.Label(media_frame, text=self.translations["select_media"]).pack()
+        ttk.Checkbutton(media_frame, text=self.translations["photos"], variable=self.selected_media_types["photos"]).pack()
+        ttk.Checkbutton(media_frame, text=self.translations["videos"], variable=self.selected_media_types["videos"]).pack()
+
+        # Right
+        out_frame = tk.Frame(top_frame)
+        out_frame.grid(row=0, column=2, sticky="nsew", padx=10)
+        ttk.Label(out_frame, text=self.translations["output_folder"]).pack()
+        ttk.Button(out_frame, text=self.translations["browse"], command=self.select_output_folder).pack()
+        self.output_label = ttk.Label(out_frame, text=self.output_folder, wraplength=200)
+        self.output_label.pack()
+
+        style = ttk.Style()
+        style.theme_use('default')
+        style.configure("blue.Horizontal.TProgressbar", foreground='royalblue', background='royalblue')
+
+        self.progress = ttk.Progressbar(self, orient="horizontal", length=600, mode="determinate", style="blue.Horizontal.TProgressbar")
+        self.progress.pack(pady=10)
+
+        self.eta_label = ttk.Label(self, text=f"{self.translations['eta']} N/A")
+        self.eta_label.pack()
+
+        self.stats_label = ttk.Label(self, text=f"{self.translations['total']} 0 | {self.translations['moved']} 0 | {self.translations['skipped']} 0")
+        self.stats_label.pack()
+
+        ttk.Button(self, text=self.translations["start"], command=self.start_processing).pack(pady=10)
+
+        bottom_frame = tk.Frame(self)
+        bottom_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=5)
+        ttk.Label(bottom_frame, text="Version 1.0").pack(side=tk.LEFT)
+        ttk.Label(bottom_frame, text="Not affiliated with Google or Takeout").pack(side=tk.RIGHT)
+
+    def update_language(self):
+        self.translations = LANGUAGES[self.language.get()]
+        self.destroy()
+        self.__init__()
+
+    def select_zip(self):
+        self.selected_zip = filedialog.askopenfilename(filetypes=[("ZIP files", "*.zip")])
+        if self.selected_zip:
+            self.zip_label.config(text=os.path.basename(self.selected_zip))
+
+    def select_output_folder(self):
+        selected = filedialog.askdirectory()
+        if selected:
+            self.output_folder = os.path.join(selected, "Merged Media")
+            self.output_label.config(text=self.output_folder)
+
+    def start_processing(self):
+        if not self.selected_zip:
+            messagebox.showerror("Error", "Please select a ZIP file first.")
+            return
+
+        if not psutil:
+            messagebox.showwarning("Warning", self.translations["missing_psutil"])
+        else:
+            zip_size = os.path.getsize(self.selected_zip)
+            disk_free = psutil.disk_usage(self.output_folder).free
+            if zip_size * 2 > disk_free:  # Estimate extraction buffer
+                messagebox.showwarning("Disk Space", self.translations["disk_warning"])
+
+        threading.Thread(target=self.process_zip).start()
+
+    def process_zip(self):
+        start_time = time.time()
+        self.total_files = self.moved_files = self.skipped_files = 0
+        self.error_log = []
+
+        os.makedirs(self.output_folder, exist_ok=True)
+        json_metadata = {}
+
+        with zipfile.ZipFile(self.selected_zip, 'r') as zip_ref:
+            all_files = zip_ref.namelist()
+            media_files = [f for f in all_files if ("photos" in f.lower() and self.selected_media_types["photos"].get()) or ("videos" in f.lower() and self.selected_media_types["videos"].get())]
+            json_files = [f for f in all_files if f.lower().endswith(".json") and any(ext in f.lower() for ext in ["photos", "videos"])]
+
+            for jf in json_files:
+                try:
+                    with zip_ref.open(jf) as f:
+                        key = os.path.basename(jf).replace('.json', '')
+                        json_metadata[key] = json.load(f)
+                except Exception as e:
+                    self.error_log.append(f"Error loading metadata: {jf} - {e}")
+
+            self.total_files = len(media_files)
+            self.progress["maximum"] = self.total_files
+
+            for idx, file in enumerate(media_files):
+                self.progress["value"] = idx + 1
+                elapsed = time.time() - start_time
+                if idx > 0:
+                    est_total = elapsed / idx * self.total_files
+                    remaining = est_total - elapsed
+                    mins, secs = divmod(int(remaining), 60)
+                    self.eta_label.config(text=f"{self.translations['eta']} {mins}:{secs:02d}")
+                self.stats_label.config(text=f"{self.translations['total']} {self.total_files} | {self.translations['moved']} {self.moved_files} | {self.translations['skipped']} {self.skipped_files}")
+                self.update_idletasks()
+
+                if not file.lower().endswith(('.jpg', '.jpeg', '.png', '.mp4', '.mov', '.avi', '.webp', '.heic')):
+                    continue
+
+                base = os.path.basename(file)
+                base_no_ext = os.path.splitext(base)[0]
+                json_data = json_metadata.get(base_no_ext)
+                date_str = None
+
+                if json_data and 'photoTakenTime' in json_data and 'timestamp' in json_data['photoTakenTime']:
+                    ts = int(json_data['photoTakenTime']['timestamp'])
+                    date_str = datetime.fromtimestamp(ts).strftime("%Y/%m")
+
+                if not date_str:
+                    try:
+                        with zip_ref.open(file) as f:
+                            img = Image.open(f)
+                            exif = img._getexif()
+                            if exif:
+                                for tag, val in exif.items():
+                                    if TAGS.get(tag) == "DateTimeOriginal":
+                                        date_str = datetime.strptime(val, "%Y:%m:%d %H:%M:%S").strftime("%Y/%m")
+                                        break
+                    except Exception as e:
+                        self.error_log.append(f"EXIF read error for {file}: {e}")
+
+                if not date_str:
+                    name = os.path.basename(file)
+                    for prefix in ["PXL_", "IMG_", "VID_", "MVIMG_"]:
+                        if prefix in name:
+                            idx = name.find(prefix) + len(prefix)
+                            potential_date = name[idx:idx + 8]
+                            if potential_date.isdigit():
+                                try:
+                                    dt = datetime.strptime(potential_date, "%Y%m%d")
+                                    if dt.year >= 1900:
+                                        date_str = dt.strftime("%Y/%m")
+                                except:
+                                    pass
+
+                if not date_str:
+                    date_str = "Unknown/Unknown"
+
+                try:
+                    year, month = date_str.split("/")
+                    out_path = os.path.join(self.output_folder, year, month)
+                    os.makedirs(out_path, exist_ok=True)
+                    filename = os.path.basename(file)
+                    with zip_ref.open(file) as src, open(os.path.join(out_path, filename), 'wb') as dst:
+                        shutil.copyfileobj(src, dst)
+                    self.moved_files += 1
+                except Exception as e:
+                    self.skipped_files += 1
+                    self.error_log.append(f"Error processing {file}: {e}")
+
+        with open(os.path.join(self.output_folder, "error_log.txt"), "w") as ef:
+            ef.write("\n".join(self.error_log) if self.error_log else "N/A")
+
+        self.progress["value"] = self.total_files
+        self.eta_label.config(text=f"{self.translations['eta']} {self.translations['done']}")
+        self.stats_label.config(text=f"{self.translations['total']} {self.total_files} | {self.translations['moved']} {self.moved_files} | {self.translations['skipped']} {self.skipped_files}")
+        messagebox.showinfo(self.translations["done"], f"{self.translations['output_saved']}\n{self.output_folder}")
+        subprocess.Popen(f'explorer "{self.output_folder}"')
+
+if __name__ == "__main__":
+    app = TakeoutMergerApp()
+    app.mainloop()
