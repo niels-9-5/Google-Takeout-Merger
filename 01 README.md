@@ -54,9 +54,6 @@ Visit the [Releases](https://github.com/YOUR-USERNAME/YOUR-REPO-NAME/releases) s
 
 ## 💡 Future Plans
 
-- Drag-and-drop support for `.zip` files
-- Cloud-based version
-- Thumbnail previews of media
 - MacOS support (if requested)
 
 ---
