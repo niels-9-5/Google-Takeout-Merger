@@ -77,7 +77,7 @@ Visit the [Releases](https://github.com/YOUR-USERNAME/YOUR-REPO-NAME/releases) s
 You can support this project by purchasing or donating on:
 
 - [Gumroad](https://ethanverse478.gumroad.com/l/qxilmt)
-- [Buy Me a Coffee](https://www.buymeacoffee.com/YOURNAME)
+- [Buy Me a Coffee](https://www.buymeacoffee.com/niels9)
 - Or just ⭐️ the repo!
 
 ---
