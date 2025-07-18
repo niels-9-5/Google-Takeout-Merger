@@ -84,4 +84,4 @@ You can support this project by purchasing or donating on:
 
 ## 🆘 Need Help?
 
-Feel free to [open an issue](https://github.com/YOUR-USERNAME/YOUR-REPO/issues) or contact me directly.
+Feel free to [open an issue]((https://github.com/niels-9-5/Google-Takeout-Merger/issues)) or contact me directly.
